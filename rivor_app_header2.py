@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -37,19 +36,20 @@ def rivor_normalization(data, criterion_types, target_values):
             norm_data[col] = (col_data.max() - col_data) / (col_data.max() - col_data.min())
         elif criterion_types[i] == "Target":
             target = target_values[i]
-            norm_data[col] = 1 - abs(col_data - target) / abs(col_data - target).max()
+            norm_data[col] = 1 - abs(col_data - target) / max(abs(target - col_data.min()), abs(target - col_data.max()))
     return norm_data
 
-def compute_rivor_scores(norm_df, weights=None, v=0.5):
+def compute_rivor_scores(norm_df, weights=None, alpha=0.5):
     if weights is None:
         weights = np.ones(norm_df.shape[1]) / norm_df.shape[1]
-    weighted_matrix = norm_df.values * weights
-    Si = weighted_matrix.sum(axis=1)
-    Ri = weighted_matrix.max(axis=1)
-    S_best, S_worst = Si.min(), Si.max()
-    R_best, R_worst = Ri.min(), Ri.max()
-    Qi = v * (1 - (Si - S_best) / (S_worst - S_best + 1e-9)) +          (1 - v) * (1 - (Ri - R_best) / (R_worst - R_best + 1e-9))
-    result_df = pd.DataFrame({"S": Si, "R": Ri, "Q": Qi}, index=norm_df.index)
+    one_minus_matrix = (1 - norm_df.values) * weights
+    S = one_minus_matrix.sum(axis=1)
+    R = one_minus_matrix.max(axis=1)
+    S_best, S_worst = S.min(), S.max()
+    R_best, R_worst = R.min(), R.max()
+    Q = ((S - S_best) / (S_worst - S_best + 1e-9)) * alpha + ((R - R_best) / (R_worst - R_best + 1e-9)) * (1 - alpha)
+    Q = 1 - Q  # So higher is better
+    result_df = pd.DataFrame({"S": S, "R": R, "Q": Q}, index=norm_df.index)
     result_df["Rank"] = result_df["Q"].rank(ascending=False).astype(int)
     return result_df.sort_values("Rank")
 
@@ -61,7 +61,7 @@ def to_excel(df_dict):
     output.seek(0)
     return output
 
-# --- Streamlit App Workflow ---
+# --- Streamlit App ---
 st.markdown("### Step 1: Upload File")
 uploaded_file = st.file_uploader("Upload Excel file (headers in second row)", type=["xlsx"])
 
@@ -93,10 +93,9 @@ if uploaded_file:
                        file_name="rivor_matrices.xlsx")
 
     st.markdown("### Step 4: RIVOR Scoring")
-    v_value = st.slider("Select compromise weight (v)", 0.0, 1.0, 0.5, step=0.05)
-
+    alpha = st.slider("Select compromise weight (α)", 0.0, 1.0, 0.5, step=0.05)
     weight_array = read_weights(uploaded_file)
-    scores_df = compute_rivor_scores(df_norm, weights=weight_array, v=v_value)
+    scores_df = compute_rivor_scores(df_norm, weights=weight_array, alpha=alpha)
     st.dataframe(scores_df)
 
     st.download_button("Download RIVOR Scores", data=to_excel({"RIVOR_Scores": scores_df}),
